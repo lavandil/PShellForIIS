@@ -1,5 +1,5 @@
 ﻿Cd C:\
-1
+
 cls
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -7,15 +7,13 @@ Import-Module WebAdministration
 
 $Path = "C:\"
 $gitUrl = "https://codeload.github.com/TargetProcess/DevOpsTaskJunior/zip/master"
+$slackUri = "https://hooks.slack.com/services/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"
+
 
 $iisAppPoolName = "TestPool"
 $iisAppPoolDotNetVersion = "v4.0"
 $HostFilePath = "$env:windir\System32\drivers\etc\hosts"
 $global:ErrorMessage =""
-#$iisAppName = "my-test-app.test"
-#$directoryPath = "C:\SomeFolder"
-
-
 
 function Get-NameFromUrl {
 
@@ -29,6 +27,7 @@ function Get-NameFromUrl {
 
     return $response.GetResponseHeader("Content-Disposition")
 }
+
 function Unzip {
     param([string]$zipfile, [string]$outpath)
 
@@ -86,8 +85,11 @@ $iisApp | Set-ItemProperty -Name "applicationPool" -Value $iisAppPoolName
 }
 function SendToSlack(){
 param([string] $URI,[object]$payload )
-    Invoke-WebRequest -URI "https://hooks.slack.com/services/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"`
-     -Method Post -ContentType "application/json" -Body (ConvertTo-Json -Compress -InputObject $payload)
+
+$objectToPayload = @{		
+	"text" = $payload;	
+}
+    Invoke-WebRequest -URI $URI -Method Post -ContentType "application/json" -Body (ConvertTo-Json -Compress -InputObject $objectToPayload)
 }
 
 If(Test-Connection($gitUrl)){
@@ -105,7 +107,9 @@ try{
 catch
     {
    $ErrorMessage = $_.ErrorDetails.Message
-    }   
+    }
+
+   
 
 
 If(Test-Path $Path$BaseName){
@@ -135,11 +139,12 @@ Write-Output "Test new web-site.."
 
 
 If((Test-Connection -adress $BaseName -Method "GET") -eq $TRUE){
-    Write-Output OK!
+     sendToSlack -URI $slackUri  -payload "Site is working!"  
 }
 else {
   Write-Output NO!
-    $ErrorMessage 
+  #$ErrorMessage  
+   sendToSlack -URI $slackUri  -payload $ErrorMessage  
     }
 }
 
