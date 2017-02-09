@@ -7,6 +7,9 @@ Import-Module WebAdministration
 
 $Path = "C:\"
 $gitUrl = "https://codeload.github.com/TargetProcess/DevOpsTaskJunior/zip/master"
+$gitRssUrl = "https://github.com/lavandil/PShellForIIS/commits/master.atom" 
+
+$shortUrl = "https://goo.gl/fu879a"
 $slackUri = "https://hooks.slack.com/services/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"
 
 
@@ -14,6 +17,7 @@ $iisAppPoolName = "TestPool"
 $iisAppPoolDotNetVersion = "v4.0"
 $HostFilePath = "$env:windir\System32\drivers\etc\hosts"
 $global:ErrorMessage =""
+$global:commits = 0 
 
 function Get-NameFromUrl {
 
@@ -91,6 +95,36 @@ $objectToPayload = @{
 }
     Invoke-WebRequest -URI $URI -Method Post -ContentType "application/json" -Body (ConvertTo-Json -Compress -InputObject $objectToPayload)
 }
+function Get-RedirectedUrl {
+
+    Param (
+        [Parameter(Mandatory=$true)]
+        [String]$URL
+    )
+
+    $request = [System.Net.WebRequest]::Create($url)
+    $request.AllowAutoRedirect=$false
+    $response=$request.GetResponse()
+
+  If ($response.StatusCode -eq "MovedPermanently")
+    {
+        $response.GetResponseHeader("Location")
+    }
+}
+function IsGitUpdated(){
+param([string]$url)
+
+    $response = Invoke-WebRequest -Uri $url
+    $doc = [xml]$response.Content
+ 
+    if($doc.feed.entry.count -gt $global:commits){
+    $global:commits = $doc.feed.entry.count
+    return $TRUE
+    }
+    else {
+    return $FALSE
+    }
+}
 
 If(Test-Connection($gitUrl)){
 
@@ -121,7 +155,7 @@ If(Test-Path $Path$BaseName){
 Unzip $Path$FileName $Path
 
 if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed"){
-    Write-Output "Installing IIS and ASP.NET"
+    Write-Output "Installing IIS and ASP.NET.."
     Install-WindowsFeature -Name Web-Server -includeManagementTools
     dism /online /enable-feature /all /featurename:IIS-ASPNET45
 }
@@ -139,12 +173,15 @@ Write-Output "Test new web-site.."
 
 
 If((Test-Connection -adress $BaseName -Method "GET") -eq $TRUE){
-     sendToSlack -URI $slackUri  -payload "Site is working!"  
+    $result =  sendToSlack -URI $slackUri  -payload "Site is working!"  
 }
 else {
   Write-Output NO!
-  #$ErrorMessage  
-   sendToSlack -URI $slackUri  -payload $ErrorMessage  
+ 
+   $result = sendToSlack -URI $slackUri  -payload $ErrorMessage  
     }
 }
+
+$originalUrl = Get-RedirectedUrl($shortUrl)
+
 
