@@ -115,61 +115,69 @@ function Get-RedirectedUrl {
 }
 function IsGitUpdated(){
 param([string]$url)
+
 Write-host "IS Git Updated function"
     $response = Invoke-WebRequest -Uri $url
     $doc = [xml]$response.Content
  
     if($doc.feed.entry.count -gt $global:commits){
     $global:commits = $doc.feed.entry.count
-    return $TRUE
+    return $FALSE
     }
     else {
-    return $FALSE
+    return $TRUE
     }
 }
 function DownloadProject(){
-param([string]$RssUrl,[string]$Url, [string] $FileName)
-
-#write-host (IsGitUpdated($gitRssUrl))
-
-    if(IsGitUpdated($gitRssUrl)){
-    Write-Host "Downloading from github.."
+param([string]$Url, [string] $FileName)
+  
+    #Write-Host "Downloading from github.."
     #Invoke-WebRequest $gitUrl -OutFile $FileName
     write-Host "Download complete.."
-    }
+    return $TRUE
 }
+
 function CheckSiteWorking(){
 
     
 }
 
 function MainAction(){
-Write-host "MAIN ACTION"
-If(Test-Connection($gitUrl)){
 
+Write-host "MAIN ACTION!"
+Write-host (Test-Connection($gitUrl))
+Write-host (IsGitUpdated($gitRssUrl))
+
+If((Test-Connection($gitUrl)) -and (IsGitUpdated($gitRssUrl))){
+
+Write-host "Before try"
 try{
    
+Write-host "try block"
+
     $FileName = Get-NameFromUrl($gitUrl) |% {($_ -split "=")[1]}    
     $BaseName = (Get-Item  $FileName).BaseName
 
 
-    DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
+   $isDoanloaded = DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
     
    }
 catch
     {
+    write-host "first catch"
    $ErrorMessage = $_.ErrorDetails.Message
     }
 
    
+   if(isDownloaded){
+    If( Test-Path $Path$BaseName){
+        Write-Host "removing folder"
+        Remove-Item -Path $Path$BaseName -Recurse
 
-If(Test-Path $Path$BaseName){
+    }
 
-    Remove-Item -Path $Path$BaseName -Recurse
-
+    Unzip $Path$FileName $Path
 }
-
-Unzip $Path$FileName $Path
 
 if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed"){
     Write-Output "Installing IIS and ASP.NET.."
@@ -203,7 +211,7 @@ else {
 }
 
 
-
+write-host "After main IF"
 $originalUrl = Get-RedirectedUrl($shortUrl)
 }
 
@@ -211,13 +219,17 @@ MainAction
 
 $action = {  
 try{
-Write-Host "Action execution"
-throw "action error"
-DownloadProject -gitRssUrl $gitUrl -gitUrl $Url -FileName $FileName
+    Write-Host "Action execution"
+    #throw "action error"
+
+    #DownloadProject -gitRssUrl $gitUrl -gitUrl $Url -FileName $FileName
+
+    MainAction
 }
-finally{
+catch{
     Write-Host $Error.Gettype()
     Write-Host $Error.Count
+    Write-Host $Error
     #to stop run 
     $timer.stop() 
     #cleanup 
@@ -228,7 +240,6 @@ finally{
 $timer = New-Object System.Timers.Timer
 
 #$event = Register-ObjectEvent -InputObject $timer -EventName elapsed -Action $action
-
 Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  thetimer -Action $action -OutVariable out
 
 
