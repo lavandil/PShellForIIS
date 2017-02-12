@@ -1,66 +1,67 @@
 ﻿
 Cd C:\
-
 cls
-Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 Import-Module WebAdministration
 
-$Path = "C:\"
+$dm = New-Module -name MainDeclaration {
+    $global:Path = "C:\"
 
-#https://github.com/TargetProcess/DevOpsTaskJunior
-$gitUrl = "https://codeload.github.com/TargetProcess/DevOpsTaskJunior/zip/master"
-$gitRssUrl = "https://github.com/TargetProcess/DevOpsTaskJunior/commits/master.atom" 
+    #https://github.com/TargetProcess/DevOpsTaskJunior
+    $global:gitUrl = "https://codeload.github.com/TargetProcess/DevOpsTaskJunior/zip/master"
+    $global:gitRssUrl = "https://github.com/TargetProcess/DevOpsTaskJunior/commits/master.atom" 
 
-$shortUrl = "https://goo.gl/fu879a"
-$slackUri = "https://hooks.slack.com/services/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"
-
-
-$iisAppPoolName = "TestPool"
-$iisAppPoolDotNetVersion = "v4.0"
-$HostFilePath = "$env:windir\System32\drivers\etc\hosts"
-$global:ErrorMessage =""
-$global:commits = 7
-
-function Get-NameFromUrl {
-
-    Param (
-        [Parameter(Mandatory=$true)]
-            [String]$URL
-)
-    $request = [System.Net.WebRequest]::Create($URL)    
-    $response=$request.GetResponse()
+    $global:shortUrl = "https://goo.gl/fu879a"
+    $global:slackUri = "https://hooks.slack.com/services/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"
 
 
-    return $response.GetResponseHeader("Content-Disposition")
-}
+    $global:iisAppPoolName = "TestPool"
+    $global:iisAppPoolDotNetVersion = "v4.0"
+    $global:HostFilePath = "$env:windir\System32\drivers\etc\hosts"
+    $global:ErrorMessage =""
+    $global:commits = 7
 
-function Unzip {
+    $global:logFilePath = "C:\log.txt"
 
-    param([string]$zipfile, [string]$outpath)
+    function Get-NameFromUrl {
 
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipfile, $outpath)
-}
-function Test-Connection(){
+        Param (
+            [Parameter(Mandatory=$true)]
+                [String]$URL
+    )
+        $request = [System.Net.WebRequest]::Create($URL)    
+        $response=$request.GetResponse()
 
-    param([string]$adress , [string] $Method )
-    try {
+
+        return $response.GetResponseHeader("Content-Disposition")
+    }
+    function Unzip {
+
+        param([string]$zipfile, [string]$outpath)
+
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipfile, $outpath)
+    }
+    function Test-Connection(){
+
+        param([string]$adress , [string] $Method )
+        try {
 
        
 
-        if(!$Method){
-        $Method = "Head" 
+            if(!$Method){
+            $Method = "Head" 
+            }
+           write-host $Method
+            if((Invoke-WebRequest $adress -Method $Method |select -ExpandProperty StatusCode) -eq 200){           
+                return $TRUE
+             }
         }
-       write-host $Method
-        if((Invoke-WebRequest $adress -Method $Method |select -ExpandProperty StatusCode) -eq 200){           
-            return $TRUE
-         }
+        catch {
+            $global:ErrorMessage = $_.ErrorDetails.Message                
+            return $FALSE
     }
-    catch {
-        $global:ErrorMessage = $_.ErrorDetails.Message                
-        return $FALSE
-}
-}
+    }
 function CreateWebSiteAndPool(){
 
 param(
@@ -94,8 +95,8 @@ if (Test-Path $iisAppName -pathType container)
 #create the site
 $iisApp = New-Item $iisAppName -bindings @{protocol="http";bindingInformation=":80:" + $iisAppName} -physicalPath $directoryPath
 $iisApp | Set-ItemProperty -Name "applicationPool" -Value $iisAppPoolName
-}
-function SendToSlack(){
+    }
+                        function SendToSlack(){
 param([string] $URI,[object]$payload )
 
 
@@ -103,50 +104,46 @@ $objectToPayload = @{
 	"text" = $payload;	
 }
     Invoke-WebRequest -URI $URI -Method Post -ContentType "application/json" -Body (ConvertTo-Json -Compress -InputObject $objectToPayload)
-}
-function Get-RedirectedUrl {
-
-    Param (
-        [Parameter(Mandatory=$true)]
-        [String]$URL
-    )
-
-    $request = [System.Net.WebRequest]::Create($url)
-    $request.AllowAutoRedirect=$false
-    $response=$request.GetResponse()
-
-  If ($response.StatusCode -eq "MovedPermanently")
-    {
-        $response.GetResponseHeader("Location")
     }
-}
-function IsGitUpdated(){
-param([string]$url)
+    function Get-RedirectedUrl {
 
-    $response = Invoke-WebRequest -Uri $url
-    $doc = [xml]$response.Content
+        Param (
+            [Parameter(Mandatory=$true)]
+            [String]$URL
+        )
+
+        $request = [System.Net.WebRequest]::Create($url)
+        $request.AllowAutoRedirect=$false
+        $response=$request.GetResponse()
+
+      If ($response.StatusCode -eq "MovedPermanently")
+        {
+            $response.GetResponseHeader("Location")
+        }
+    }
+    function IsGitUpdated(){
+    param([string]$url)
+
+        $response = Invoke-WebRequest -Uri $url
+        $doc = [xml]$response.Content
  
-    if($doc.feed.entry.count -gt $global:commits){
-    $global:commits = $doc.feed.entry.count
-    return $FALSE
+        if($doc.feed.entry.count -gt $global:commits){
+        $global:commits = $doc.feed.entry.count
+        return $FALSE
+        }
+        else {
+        return $TRUE
+        }
     }
-    else {
-    return $TRUE
-    }
-}
-function DownloadProject(){
-param([string]$Url, [string] $FileName)
+    function DownloadProject(){
+    param([string]$Url, [string] $FileName)
   
-    #Write-Host "Downloading from github.."
-    #Invoke-WebRequest $gitUrl -OutFile $FileName
-    write-Host "Download complete.."
-    return $TRUE
-}
+        #Write-Host "Downloading from github.."
+        #Invoke-WebRequest $gitUrl -OutFile $FileName
+        write-Host "Download complete.."
+        return $TRUE
+    }
 
-function CheckSiteWorking(){
-
-    
-}
 
 function MainAction(){
 
@@ -223,12 +220,10 @@ else {
 
 write-host "After main IF"
 $originalUrl = Get-RedirectedUrl($shortUrl)
+    }
+
 }
 #---------------------------------------------------------------------------------------------------------
-
-$ErrorActionPreference="SilentlyContinue"
-Stop-Transcript | out-null
-$ErrorActionPreference = "Continue" # or "Stop"
 
 MainAction
 
@@ -247,7 +242,7 @@ catch{
     Write-Host "IN Catch"
     Write-Host $Error.Gettype()
     Write-Host $Error.Count
-    Write-Host $Error
+    Write-Host $Error | fl * -Force
 
    #to stop run  #cleanup 
     $timer.stop()       
@@ -265,12 +260,12 @@ finally{
 $timer = New-Object System.Timers.Timer
 
 #$event = Register-ObjectEvent -InputObject $timer -EventName elapsed -Action $action
-Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  thetimer -Action $action -OutVariable out
-
+$EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  thetimer -Action $action -OutVariable out
 
 
 $timer.Interval = 15000
 $timer.AutoReset = $true
 $timer.start()
+
 
 
