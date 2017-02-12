@@ -48,15 +48,13 @@ function Unzip {
 function Test-Connection(){
 
         param([string]$adress , [string] $Method )
-        try {
-
-       
-
+        try {     
             if(!$Method){
             $Method = "Head" 
             }
            write-host $Method
-            if((Invoke-WebRequest $adress -Method $Method |select -ExpandProperty StatusCode) -eq 200){           
+            if((Invoke-WebRequest $adress -Method $Method -DisableKeepAlive -TimeoutSec 1000  |
+                select -ExpandProperty StatusCode) -eq 200){           
                 return $TRUE
              }
         }
@@ -153,32 +151,39 @@ function DownloadProject(){
     }
 #---------------------------------------------------------------------------------------------------------
 function ToLog(){
-param([string]$message,[bool]$noDatePrefix)
+param([string]$message,[bool]$noDatePrefix = $false, [string]$color= "Green")
     if($noDatePrefix){
-   
+  
         $message |
          %{write-host $_; out-file -filepath $logFile -inputobject $_ -append}
     }
     else {
-        $(get-date -Format ‘HH:mm:ss’)+":"+$message |
-         %{write-host $_; out-file -filepath $logFile -inputobject $_ -append}
+     
+         "$(get-date -Format ‘HH:mm:ss’):" |
+            %{Write-Host $_ -ForegroundColor $color -NoNewline; Write-Host $message;$_ = $_+ $($message);
+             out-file -filepath $logFile -inputobject $_ -append}     
     }
+}
+#---------------------------------------------------------------------------------------------------------
+function Stop(){
+$timer.Stop()
+Unregister-Event thetimer
 }
 #---------------------------------------------------------------------------------------------------------
 function MainAction(){
 
-#Write-host "MAIN ACTION!"
+$gitUrlTest = Test-Connection($gitUrl)
+$needUpdate = IsGitUpdated($gitRssUrl)
+
+If($gitUrlTest -and $needUpdate){
+
 ToLog -message  $(get-date)  -noDatePrefix $TRUE 
+
 ToLog "Zip path is $gitUrl"  
 ToLog "Rss path is $gitRssUrl"
-
-$gitUrlTest =  Test-Connection($gitUrl)
-
-$needUpdate = IsGitUpdated($gitRssUrl)
 ToLog "Testing coonection to zip. Accessible? $gitUrlTest"
 ToLog "Require to upload project? $needUpdate"
 
-If($gitUrlTest -and $needUpdate){
 try{ 
 
     $FileName = Get-NameFromUrl($gitUrl) |% {($_ -split "=")[1]}    
@@ -261,30 +266,22 @@ MainAction
 
 $action = {  
 try{
-   
-    Write-Host "ACTION IN TIMER"
-    #Get-event |fl * -Force |write-host
-    throw "action error"
-    #DownloadProject -gitRssUrl $gitUrl -gitUrl $Url -FileName $FileName
 
+    #throw "action error" 
     MainAction
-    #Start-Sleep 5
 }
 catch{
-    Write-Host "IN Catch"
-    Write-Host $($Error.Gettype())
-    ToLog $($Error)  
-   
-   $result =  sendToSlack -URI $slackUri  -payload $Error   
-   #Write-Host $result
-  
-    
-    write-host $($timer.GetType())
-   #to stop run  #cleanup 
+    ToLog "Error occured.Stopping script"
     $timer.stop()       
     Unregister-Event thetimer
 
-    Write-Host $($Error)
+    ToLog $($Error) -color Red   
+    ToLog "Script stopped. Sending message to Slack"
+       
+    $result =  sendToSlack -URI $slackUri  -payload "$Error"
+  
+    ToLog "Slack get Message" 
+
   
 }
 finally{ 
