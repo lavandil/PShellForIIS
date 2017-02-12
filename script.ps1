@@ -22,9 +22,10 @@ $dm = New-Module -name MainDeclaration {
     $global:ErrorMessage =""
     $global:commits = 7
 
-    $global:logFilePath = "C:\log.txt"
+    $global:logFile = "C:\log.txt"
 
-    function Get-NameFromUrl {
+#---------------------------------------------------------------------------------------------------------
+function Get-NameFromUrl {
 
         Param (
             [Parameter(Mandatory=$true)]
@@ -36,13 +37,15 @@ $dm = New-Module -name MainDeclaration {
 
         return $response.GetResponseHeader("Content-Disposition")
     }
-    function Unzip {
+#---------------------------------------------------------------------------------------------------------
+function Unzip {
 
         param([string]$zipfile, [string]$outpath)
 
         [System.IO.Compression.ZipFile]::ExtractToDirectory($zipfile, $outpath)
     }
-    function Test-Connection(){
+#---------------------------------------------------------------------------------------------------------
+function Test-Connection(){
 
         param([string]$adress , [string] $Method )
         try {
@@ -62,6 +65,7 @@ $dm = New-Module -name MainDeclaration {
             return $FALSE
     }
     }
+#---------------------------------------------------------------------------------------------------------
 function CreateWebSiteAndPool(){
 
 param(
@@ -95,8 +99,9 @@ if (Test-Path $iisAppName -pathType container)
 #create the site
 $iisApp = New-Item $iisAppName -bindings @{protocol="http";bindingInformation=":80:" + $iisAppName} -physicalPath $directoryPath
 $iisApp | Set-ItemProperty -Name "applicationPool" -Value $iisAppPoolName
-    }
-                        function SendToSlack(){
+}
+#---------------------------------------------------------------------------------------------------------
+function SendToSlack(){
 param([string] $URI,[object]$payload )
 
 
@@ -105,7 +110,8 @@ $objectToPayload = @{
 }
     Invoke-WebRequest -URI $URI -Method Post -ContentType "application/json" -Body (ConvertTo-Json -Compress -InputObject $objectToPayload)
     }
-    function Get-RedirectedUrl {
+#---------------------------------------------------------------------------------------------------------
+function Get-RedirectedUrl {
 
         Param (
             [Parameter(Mandatory=$true)]
@@ -121,7 +127,8 @@ $objectToPayload = @{
             $response.GetResponseHeader("Location")
         }
     }
-    function IsGitUpdated(){
+#---------------------------------------------------------------------------------------------------------
+function IsGitUpdated(){
     param([string]$url)
 
         $response = Invoke-WebRequest -Uri $url
@@ -135,7 +142,8 @@ $objectToPayload = @{
         return $TRUE
         }
     }
-    function DownloadProject(){
+#---------------------------------------------------------------------------------------------------------
+function DownloadProject(){
     param([string]$Url, [string] $FileName)
   
         #Write-Host "Downloading from github.."
@@ -143,56 +151,68 @@ $objectToPayload = @{
         write-Host "Download complete.."
         return $TRUE
     }
-
-
+#---------------------------------------------------------------------------------------------------------
+function ToLog(){
+param([string]$message,[bool]$noDatePrefix)
+    if($noDatePrefix){
+   
+        $message |
+         %{write-host $_; out-file -filepath $logFile -inputobject $_ -append}
+    }
+    else {
+        $(get-date -Format ‘HH:mm:ss’)+":"+$message |
+         %{write-host $_; out-file -filepath $logFile -inputobject $_ -append}
+    }
+}
+#---------------------------------------------------------------------------------------------------------
 function MainAction(){
 
-Write-host "MAIN ACTION!"
-Write-host $gitUrl
-Write-host $gitRssUrl 
-Write-host (Test-Connection($gitUrl))
-Write-host (IsGitUpdated($gitRssUrl))
+#Write-host "MAIN ACTION!"
+ToLog -message  $(get-date)  -noDatePrefix $TRUE 
+ToLog "Zip path is $gitUrl"  
+ToLog "Rss path is $gitRssUrl"
 
-If((Test-Connection($gitUrl)) -and (IsGitUpdated($gitRssUrl))){
+$gitUrlTest =  Test-Connection($gitUrl)
 
-Write-host "Before try"
-try{
-   
-Write-host "try block"
+$needUpdate = IsGitUpdated($gitRssUrl)
+ToLog "Testing coonection to zip. Accessible? $gitUrlTest"
+ToLog "Require to upload project? $needUpdate"
+
+If($gitUrlTest -and $needUpdate){
+try{ 
 
     $FileName = Get-NameFromUrl($gitUrl) |% {($_ -split "=")[1]}    
     $BaseName = (Get-Item  $FileName).BaseName
-
-
-   $isDownloaded = DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
+    ToLog "Zip name $FileName unzip in folder $BaseName"  
+    $isDownloaded = DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
     
    }
 catch
     {
-    write-host "first catch"
-   $ErrorMessage = $_.ErrorDetails.Message
+    ToLog "Error occured at download time"
+    $ErrorMessage = $_.ErrorDetails.Message
+    ToLog $ErrorMessage
     }
-
    
    if($isDownloaded){
-   Write-Host "in if isdowloaded"
-    If( Test-Path $Path$BaseName){
-        Write-Host "removing folder"
-        Remove-Item -Path $Path$BaseName -Recurse
-
-    }
+    ToLog "$FileName downloaded"
+       if( Test-Path $Path$BaseName){
+           ToLog "Folder $Path$BaseName exists. Removing.."
+            Remove-Item -Path $Path$BaseName -Recurse
+          }
 
     Unzip $Path$FileName $Path
+    ToLog("Unzipping in $Path$BaseName")
 }
-Write-Host "after unzip"
+
 
 if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed"){
-    Write-Output "Installing IIS and ASP.NET.."
+    ToLog "Installing IIS and ASP.NET.."
     Install-WindowsFeature -Name Web-Server -includeManagementTools
     dism /online /enable-feature /all /featurename:IIS-ASPNET45
 }
 
-
+ToLog "Creating web-site and pool"
 $oldPath = Get-Location
 createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $iisAppPoolDotNetVersion `
 -iisAppName $BaseName -directoryPath $Path$BaseName 
@@ -200,39 +220,51 @@ cd $oldPath
 
 
 if ((Test-Path $HostFilePath) -eq $TRUE){
-Write-Output "Changing host file.."
+
+ToLog "Changing host file.."
 Write-output  "127.0.0.1 $BaseName"| Out-File $HostFilePath  -encoding ASCII -append
 }
 
-Write-Output "Test new web-site.."
+ToLog "Test new web-site.."
 
 
 If((Test-Connection -adress $BaseName -Method "GET") -eq $TRUE){
-    $result =  sendToSlack -URI $slackUri  -payload "Site is working!"  
+
+    ToLog "Site $BaseName is working!"
+    $result =  sendToSlack -URI $slackUri  -payload "Site $BaseName is working!"  
 }
 else {
-  Write-Output NO!
- 
-   $result = sendToSlack -URI $slackUri  -payload $ErrorMessage  
+
+    ToLog "Site $BaseName responded with errors"
+    ToLog $ErrorMessage
+    ToLog "Sending message to Slack $slackUri"
+    $result = sendToSlack -URI $slackUri  -payload $ErrorMessage     
     }
+
+     if($result.StatusCode -eq 200){
+        ToLog "Slack get Message"
+    }
+
+    ToLog $("-"*20) -noDatePrefix $TRUE
 }
 
 
-write-host "After main IF"
+#write-host "After main IF"
 $originalUrl = Get-RedirectedUrl($shortUrl)
     }
 
 }
 #---------------------------------------------------------------------------------------------------------
 
+
 MainAction
 
 $action = {  
 try{
-    "-"*10 | Write-Host 
+   
     Write-Host "ACTION IN TIMER"
-    Get-event |fl * -Force |write-host
-    #throw "action error"
+    #Get-event |fl * -Force |write-host
+    throw "action error"
     #DownloadProject -gitRssUrl $gitUrl -gitUrl $Url -FileName $FileName
 
     MainAction
@@ -240,17 +272,22 @@ try{
 }
 catch{
     Write-Host "IN Catch"
-    Write-Host $Error.Gettype()
-    Write-Host $Error.Count
-    Write-Host $Error | fl * -Force
-
+    Write-Host $($Error.Gettype())
+    ToLog $($Error)  
+   
+   $result =  sendToSlack -URI $slackUri  -payload $Error   
+   #Write-Host $result
+  
+    
+    write-host $($timer.GetType())
    #to stop run  #cleanup 
     $timer.stop()       
     Unregister-Event thetimer
+
+    Write-Host $($Error)
   
 }
-finally{
- 
+finally{ 
     
     Write-Host "IN FINALLY"
     Write-Host $Error
