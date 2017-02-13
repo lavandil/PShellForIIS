@@ -5,26 +5,26 @@ cls
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 Import-Module WebAdministration
 
-$dm = New-Module -name MainDeclaration {
-    $global:Path = "C:\"
+New-Module -name MainDeclaration {
+    $Path = "C:\"
  
 
-    $global:projectPath= "https://github.com/TargetProcess/DevOpsTaskJunior"
-    $global:gitUrl = "$($projectPath -replace '^https:\/\/' , 'https://codeload.')/zip/master"
-    $global:gitRssUrl = "$projectPath/commits/master.atom"
+    $projectPath= "https://github.com/TargetProcess/DevOpsTaskJunior"
+    $gitUrl = "$($projectPath -replace '^https:\/\/' , 'https://codeload.')/zip/master"
+    $gitRssUrl = "$projectPath/commits/master.atom"
    
 
-    $global:shortUrl = "https://goo.gl/fu879a"
-    $global:slackUri = "https://hooks.slack.com/services/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"
+    $shortUrl = "https://goo.gl/fu879a"
+    $slackUri = "https://hooks.slack.com/services/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"
 
 
-    $global:iisAppPoolName = "TestPool"
-    $global:iisAppPoolDotNetVersion = "v4.0"
-    $global:HostFilePath = "$env:windir\System32\drivers\etc\hosts"
-    $global:ErrorMessage =""
-    $global:commits = 7
+    $iisAppPoolName = "TestPool"
+    $iisAppPoolDotNetVersion = "v4.0"
+    $HostFilePath = "$env:windir\System32\drivers\etc\hosts"
+    $ErrorMessage =""
+    $commits = 7
 
-    $global:logFile = "C:\log.txt"
+    $logFile = "C:\log.txt"
 
 #---------------------------------------------------------------------------------------------------------
 function Get-NameFromUrl {
@@ -86,6 +86,7 @@ if (!(Test-Path $iisAppPoolName -pathType container))
     #create the app pool
     $appPool = New-Item $iisAppPoolName
     $appPool | Set-ItemProperty -Name "managedRuntimeVersion" -Value $iisAppPoolDotNetVersion
+    $appPool | Set-ItemProperty -Name "managedPipelineMode" -Value "Integrated"
 }
 
 #navigate to the sites root
@@ -158,7 +159,7 @@ param([string]$message,[bool]$noDatePrefix = $false, [string]$color= "Green")
     if($noDatePrefix){
   
         $message |
-         %{write-host $_; out-file -filepath $logFile -inputobject $_ -append}
+         %{write-host $_ -ForegroundColor Magenta; out-file -filepath $logFile -inputobject $_ -append}
     }
     else {
      
@@ -204,13 +205,14 @@ try{
     $isDownloaded = DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
     
    }
-catch
-    {
+catch{
+
     ToLog "Error occured at download time"
     $ErrorMessage = $_.ErrorDetails.Message
     ToLog $ErrorMessage
+     #>>>?????
     }
-   
+  
    if($isDownloaded){
     ToLog "$FileName downloaded"
        if( Test-Path $Path$BaseName){
@@ -248,8 +250,8 @@ ToLog "Test new web-site.."
 
 If((Test-Connection -adress $BaseName -Method "GET") -eq $TRUE){
 
-    ToLog "Site $BaseName is working!"
-    $result =  sendToSlack -URI $slackUri  -payload "Site $BaseName is working!"  
+    ToLog "Site $BaseName on $env:computername is working!"
+    $result =  sendToSlack -URI $slackUri  -payload "Site $BaseName on $env:computername  is working!"  
 }
 else {
 
@@ -260,7 +262,7 @@ else {
     }
 
      if($result.StatusCode -eq 200){
-        ToLog "Slack get Message"
+        ToLog "Slack got Message"
     }
 
     ToLog $("-"*20) -noDatePrefix $TRUE
@@ -271,7 +273,8 @@ else {
 $originalUrl = Get-RedirectedUrl($shortUrl)
     }
 
-}
+Export-ModuleMember -Function * -Variable *
+} | Import-Module
 #---------------------------------------------------------------------------------------------------------
 
 
