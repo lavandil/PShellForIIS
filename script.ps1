@@ -7,10 +7,12 @@ Import-Module WebAdministration
 
 $dm = New-Module -name MainDeclaration {
     $global:Path = "C:\"
+ 
 
-    #https://github.com/TargetProcess/DevOpsTaskJunior
-    $global:gitUrl = "https://codeload.github.com/TargetProcess/DevOpsTaskJunior/zip/master"
-    $global:gitRssUrl = "https://github.com/TargetProcess/DevOpsTaskJunior/commits/master.atom" 
+    $global:projectPath= "https://github.com/TargetProcess/DevOpsTaskJunior"
+    $global:gitUrl = "$($projectPath -replace '^https:\/\/' , 'https://codeload.')/zip/master"
+    $global:gitRssUrl = "$projectPath/commits/master.atom"
+   
 
     $global:shortUrl = "https://goo.gl/fu879a"
     $global:slackUri = "https://hooks.slack.com/services/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"
@@ -53,6 +55,7 @@ function Test-Connection(){
             $Method = "Head" 
             }
            write-host $Method
+           #write-host $adress
             if((Invoke-WebRequest $adress -Method $Method -DisableKeepAlive -TimeoutSec 1000  |
                 select -ExpandProperty StatusCode) -eq 200){           
                 return $TRUE
@@ -165,6 +168,15 @@ param([string]$message,[bool]$noDatePrefix = $false, [string]$color= "Green")
     }
 }
 #---------------------------------------------------------------------------------------------------------
+function FixConfig(){
+$configPath = "C:\DevOpsTaskJunior-master\Web.config"
+$config = Get-Content $configPath
+$config | %{
+    $_ -replace '\.>' , '>' `
+       -replace '4\.5\.2', '4.5'
+} | Set-Content $configPath
+}
+#---------------------------------------------------------------------------------------------------------
 function Stop(){
 $timer.Stop()
 Unregister-Event thetimer
@@ -188,7 +200,7 @@ try{
 
     $FileName = Get-NameFromUrl($gitUrl) |% {($_ -split "=")[1]}    
     $BaseName = (Get-Item  $FileName).BaseName
-    ToLog "Zip name $FileName unzip in folder $BaseName"  
+    ToLog "$FileName unzip in folder $BaseName"  
     $isDownloaded = DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
     
    }
@@ -208,6 +220,7 @@ catch
 
     Unzip $Path$FileName $Path
     ToLog("Unzipping in $Path$BaseName")
+    FixConfig
 }
 
 
@@ -224,7 +237,7 @@ createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $ii
 cd $oldPath
 
 
-if ((Test-Path $HostFilePath) -eq $TRUE){
+if ((Test-Path $HostFilePath) -eq $TRUE -and !$(Get-Content -Path $HostFilePath| Select-String -pattern "127.0.0.1 $BaseName" -Quiet)){
 
 ToLog "Changing host file.."
 Write-output  "127.0.0.1 $BaseName"| Out-File $HostFilePath  -encoding ASCII -append
