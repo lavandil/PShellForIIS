@@ -54,15 +54,18 @@ function Test-Connection(){
             if(!$Method){
             $Method = "Head" 
             }
-           #write-host $Method
-           #write-host $adress
-            if((Invoke-WebRequest $adress -Method $Method -DisableKeepAlive -TimeoutSec 1000  |
-                select -ExpandProperty StatusCode) -eq 200){           
+           write-host $Method
+           write-host $adress
+           $httpResponse = Invoke-WebRequest $adress -Method $Method 
+           $httpResponse.BaseResponse.Close()
+           
+            if( ($httpResponse |select -ExpandProperty StatusCode) -eq 200){           
                 return $TRUE
              }
         }
         catch {
-            $global:ErrorMessage = $_.ErrorDetails.Message                
+            $global:ErrorMessage = $_.ErrorDetails.Message    
+            Write-Host  "in test ($_.ErrorDetails.Message)"            
             return $FALSE
     }
     }
@@ -231,10 +234,11 @@ try{
 }
 #---------------------------------------------------------------------------------------------------------
 function MainAction(){
-
+Write-host Main
 $gitUrlTest = Test-Connection($gitUrl)
 $needUpdate = IsGitUpdated($gitRssUrl)
 
+write-host $gitUrlTest
 If($gitUrlTest -and $needUpdate){
 
 ToLog -message  $(get-date)  -noDatePrefix $TRUE 
@@ -283,7 +287,7 @@ if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -n
     dism /online /enable-feature /all /featurename:IIS-ASPNET45
 }
 
-ToLog "Creating web-site and pool"
+ToLog "Creating web-site and pool" #move to function
 $oldPath = Get-Location
 createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $iisAppPoolDotNetVersion `
 -iisAppName $BaseName -directoryPath $Path$BaseName 
@@ -320,7 +324,7 @@ else {
 }
 
 
-#write-host "After main IF"
+write-host "After main IF"
 $originalUrl = Get-RedirectedUrl($shortUrl)
     }
 
@@ -333,7 +337,7 @@ MainAction
 
 $action = {  
 try{
-
+    write-host in ACTION
     #throw "action error" 
     MainAction
 }
