@@ -54,7 +54,7 @@ function Test-Connection(){
             if(!$Method){
             $Method = "Head" 
             }
-           write-host $Method
+           #write-host $Method
            #write-host $adress
             if((Invoke-WebRequest $adress -Method $Method -DisableKeepAlive -TimeoutSec 1000  |
                 select -ExpandProperty StatusCode) -eq 200){           
@@ -150,7 +150,7 @@ function DownloadProject(){
   
         #Write-Host "Downloading from github.."
         #Invoke-WebRequest $gitUrl -OutFile $FileName
-        write-Host "Download complete.."
+        #write-Host "Download complete.."
         return $TRUE
     }
 #---------------------------------------------------------------------------------------------------------
@@ -161,8 +161,7 @@ param([string]$message,[bool]$noDatePrefix = $false, [string]$color= "Green")
         $message |
          %{write-host $_ -ForegroundColor Magenta; out-file -filepath $logFile -inputobject $_ -append}
     }
-    else {
-     
+    else {     
          "$(get-date -Format ‘HH:mm:ss’):" |
             %{Write-Host $_ -ForegroundColor $color -NoNewline; Write-Host $message;$_ = $_+ $($message);
              out-file -filepath $logFile -inputobject $_ -append}     
@@ -181,6 +180,54 @@ $config | %{
 function Stop(){
 $timer.Stop()
 Unregister-Event thetimer
+}
+#---------------------------------------------------------------------------------------------------------
+function StopIIS(){
+  Stop-Service iisadmin,was,w3svc 
+  #Stop-Service w3svc
+}
+#---------------------------------------------------------------------------------------------------------
+function StartIIS(){
+  Start-Service iisadmin,was,w3svc
+}
+#---------------------------------------------------------------------------------------------------------
+function StopPool(){
+param([string]$poolName)
+try{
+ $state= (Get-WebAppPoolState -Name $poolName).Value
+
+     if($state -ne "Stopped"){
+      Stop-WebAppPool  -Name $poolName
+     }
+
+
+ while((Get-WebAppPoolState -Name $poolName).Value -ne "Stopped"){
+    Start-Sleep -s 5
+    ToLog "Stopping $poolName, state: $((Get-WebAppPoolState -Name $poolName).Value)"    
+ }
+ }
+ catch{
+    write-host $Error
+ }
+}
+#---------------------------------------------------------------------------------------------------------
+function StartPool(){
+param([string]$poolName)
+try{
+ $state= (Get-WebAppPoolState -Name $poolName).Value
+
+     if($state -eq "Stopped"){
+      Start-WebAppPool  -Name $poolName
+     } 
+
+ while((Get-WebAppPoolState -Name $poolName).Value -ne "Started"){
+    Start-Sleep -s 2
+    ToLog "Starting $poolName, state: $((Get-WebAppPoolState -Name $poolName).Value)"
+ }
+ }
+ catch{
+    write-host $Error
+ }
 }
 #---------------------------------------------------------------------------------------------------------
 function MainAction(){
@@ -217,12 +264,16 @@ catch{
     ToLog "$FileName downloaded"
        if( Test-Path $Path$BaseName){
            ToLog "Folder $Path$BaseName exists. Removing.."
-            Remove-Item -Path $Path$BaseName -Recurse
+
+            StopPool -poolName $iisAppPoolName
+            Remove-Item -Path $Path$BaseName -Recurse -Force  #still error with small timer time  
           }
 
     Unzip $Path$FileName $Path
     ToLog("Unzipping in $Path$BaseName")
-    FixConfig
+    FixConfig  
+    StartPool -poolName $iisAppPoolName
+  
 }
 
 
@@ -297,13 +348,14 @@ catch{
     $result =  sendToSlack -URI $slackUri  -payload "$Error"
   
     ToLog "Slack get Message" 
-
+    write-host $_.Exception
   
 }
 finally{ 
     
     Write-Host "IN FINALLY"
-    Write-Host $Error
+    #Write-Host $Error
+
 }
 } 
 
@@ -313,7 +365,7 @@ $timer = New-Object System.Timers.Timer
 $EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  thetimer -Action $action -OutVariable out
 
 
-$timer.Interval = 15000
+$timer.Interval = 25000
 $timer.AutoReset = $true
 $timer.start()
 
