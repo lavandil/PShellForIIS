@@ -3,7 +3,7 @@ Cd C:\
 cls
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-Import-Module WebAdministration
+
 
 New-Module -name MainDeclaration {
     $Path = "C:\"
@@ -25,6 +25,8 @@ New-Module -name MainDeclaration {
     $commits = 7
 
     $logFile = "C:\log.txt"
+    $EventExecuting = $TRUE
+  
 
 #---------------------------------------------------------------------------------------------------------
 function Get-NameFromUrl {
@@ -55,7 +57,7 @@ function Test-Connection(){
             $Method = "Head" 
             }
            write-host $Method
-           write-host $adress
+           write-host "Adress $adress"
            $httpResponse = Invoke-WebRequest $adress -Method $Method 
            $httpResponse.BaseResponse.Close()
            
@@ -64,8 +66,8 @@ function Test-Connection(){
              }
         }
         catch {
-            $global:ErrorMessage = $_.ErrorDetails.Message    
-            Write-Host  "in test ($_.ErrorDetails.Message)"            
+            $global:ErrorMessage = $_   
+            Write-Host  "in test $_"            
             return $FALSE
     }
     }
@@ -79,7 +81,7 @@ param(
 [string] $directoryPath
 )
 
-
+Import-Module WebAdministration
 #navigate to the app pools root
 cd IIS:\AppPools\
 
@@ -113,7 +115,14 @@ param([string] $URI,[object]$payload )
 $objectToPayload = @{		
 	"text" = $payload;	
 }
-    Invoke-WebRequest -URI $URI -Method Post -ContentType "application/json" -Body (ConvertTo-Json -Compress -InputObject $objectToPayload)
+    $result = Invoke-WebRequest -URI $URI -Method Post -ContentType "application/json" -Body (ConvertTo-Json -Compress -InputObject $objectToPayload)
+
+    if($result.StatusCode -eq 200){
+
+        ToLog "Slack got Message"
+        return $TRUE
+    }
+    return $FALSE
     }
 #---------------------------------------------------------------------------------------------------------
 function Get-RedirectedUrl {
@@ -180,18 +189,21 @@ $config | %{
 } | Set-Content $configPath
 }
 #---------------------------------------------------------------------------------------------------------
-function Stop(){
+function StopAll(){
 $timer.Stop()
 Unregister-Event thetimer
+
+Get-EventSubscriber| Unregister-Event
 }
 #---------------------------------------------------------------------------------------------------------
 function StopIIS(){
+  #Stop-Service iisadmin,was,w3svc 
   Stop-Service iisadmin,was,w3svc 
   #Stop-Service w3svc
 }
 #---------------------------------------------------------------------------------------------------------
 function StartIIS(){
-  Start-Service iisadmin,was,w3svc
+  Start-Service was,w3svc
 }
 #---------------------------------------------------------------------------------------------------------
 function StopPool(){
@@ -233,6 +245,25 @@ try{
  }
 }
 #---------------------------------------------------------------------------------------------------------
+function TestSite(){
+param([string]$name)
+
+If((Test-Connection -adress $name -Method "GET") -eq $TRUE){
+
+    ToLog "Site $name on $env:computername is working!"
+    $result =  sendToSlack -URI $slackUri  -payload "Site $global:BaseName on $env:computername  is working!"  
+}
+else {
+
+    ToLog "Site $name responded with errors"
+    ToLog $ErrorMessage #remove from testconnection tolog
+    ToLog "Sending message to Slack $slackUri"
+    $result = sendToSlack -URI $slackUri  -payload $ErrorMessage     
+    }
+
+    ToLog $("-"*20) -noDatePrefix $TRUE
+}
+#---------------------------------------------------------------------------------------------------------
 function MainAction(){
 Write-host Main
 $gitUrlTest = Test-Connection($gitUrl)
@@ -251,7 +282,7 @@ ToLog "Require to upload project? $needUpdate"
 try{ 
 
     $FileName = Get-NameFromUrl($gitUrl) |% {($_ -split "=")[1]}    
-    $BaseName = (Get-Item  $FileName).BaseName
+    $global:BaseName = (Get-Item  $FileName).BaseName
     ToLog "$FileName unzip in folder $BaseName"  
     $isDownloaded = DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
     
@@ -280,7 +311,7 @@ catch{
   
 }
 
-
+#add test of asp-net installed
 if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed"){
     ToLog "Installing IIS and ASP.NET.."
     Install-WindowsFeature -Name Web-Server -includeManagementTools
@@ -293,6 +324,8 @@ createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $ii
 -iisAppName $BaseName -directoryPath $Path$BaseName 
 cd $oldPath
 
+write-host Before timer
+start-sleep -Seconds 5
 
 if ((Test-Path $HostFilePath) -eq $TRUE -and !$(Get-Content -Path $HostFilePath| Select-String -pattern "127.0.0.1 $BaseName" -Quiet)){
 
@@ -300,51 +333,42 @@ ToLog "Changing host file.."
 Write-output  "127.0.0.1 $BaseName"| Out-File $HostFilePath  -encoding ASCII -append
 }
 
-ToLog "Test new web-site.."
+ToLog "Testing $BaseName"
 
-
-If((Test-Connection -adress $BaseName -Method "GET") -eq $TRUE){
-
-    ToLog "Site $BaseName on $env:computername is working!"
-    $result =  sendToSlack -URI $slackUri  -payload "Site $BaseName on $env:computername  is working!"  
-}
-else {
-
-    ToLog "Site $BaseName responded with errors"
-    ToLog $ErrorMessage
-    ToLog "Sending message to Slack $slackUri"
-    $result = sendToSlack -URI $slackUri  -payload $ErrorMessage     
-    }
-
-     if($result.StatusCode -eq 200){
-        ToLog "Slack got Message"
-    }
-
-    ToLog $("-"*20) -noDatePrefix $TRUE
+    TestSite $BaseName
 }
 
 
 write-host "After main IF"
 $originalUrl = Get-RedirectedUrl($shortUrl)
+
+Write-Host "in main $eventExecuting"
+$global:eventExecuting = $FALSE
     }
 
 Export-ModuleMember -Function * -Variable *
 } | Import-Module
 #---------------------------------------------------------------------------------------------------------
 
-
+try{
 MainAction
+}
+catch{
+ToLog $_
+}
 
 $action = {  
 try{
     write-host in ACTION
     #throw "action error" 
+    write-host "bool  - $eventExecuting"
+    if(!$eventExecuting){
     MainAction
+    }
 }
 catch{
     ToLog "Error occured.Stopping script"
-    $timer.stop()       
-    Unregister-Event thetimer
+    stop
 
     ToLog $($Error) -color Red   
     ToLog "Script stopped. Sending message to Slack"
@@ -369,9 +393,60 @@ $timer = New-Object System.Timers.Timer
 $EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  thetimer -Action $action -OutVariable out
 
 
-$timer.Interval = 25000
+$timer.Interval = 30000
 $timer.AutoReset = $true
 $timer.start()
 
+$action2 = {
+$timer.Stop()
+#write-host action-2
+$message = "IIS stopped. Trying to restart. " 
+ToLog $message
+$SlackPayload = $message
 
+    if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed"){
+      
+      $message = "IIS was uninstalled. Trying to reload project"
+      ToLog $message
+      $slackPayload+= $message
+     
+      $commits = 0
+      MainAction
+    
+    }
 
+    else{
+
+    startIIS
+    Start-Sleep -Seconds 5
+        if((Get-Service w3svc).Status -eq "Running"){
+            
+            $message = "IIS working. Testing $global:BaseName"
+            ToLog $message
+            $SlackPayload+=$message
+            $result =  sendToSlack -URI $slackUri  -payload $slackPayload 
+            TestSite $global:BaseName
+        }
+        else{
+         $message ="IIS couldn't be restarted on $env:computername"
+         ToLog $message
+         $SlackPayload += $message
+                
+         $result =  sendToSlack -URI $slackUri  -payload $slackPayload 
+        }
+    }
+    $timer.Start()
+       
+}
+$query1 = @" 
+ Select * From __InstanceOperationEvent Within 1 
+    Where TargetInstance Isa 'Win32_Service' 
+   and 
+   TargetInstance.Name='w3svc'
+   and
+   TargetInstance.State="Stopped"
+"@
+
+$eventJob2 = Register-WmiEvent -Query $query1 -Action $action2
+
+# Get-EventSubscriber| Unregister-Event
