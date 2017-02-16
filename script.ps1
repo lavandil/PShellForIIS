@@ -222,7 +222,8 @@ try{
  }
  }
  catch{
-    write-host $Error
+    
+    ToLog  $_
  }
 }
 #---------------------------------------------------------------------------------------------------------
@@ -241,7 +242,7 @@ try{
  }
  }
  catch{
-    write-host $Error
+    ToLog $_
  }
 }
 #---------------------------------------------------------------------------------------------------------
@@ -262,6 +263,82 @@ else {
     }
 
     ToLog $("-"*20) -noDatePrefix $TRUE
+}
+#---------------------------------------------------------------------------------------------------------
+function TimerHandler(){
+try{
+    write-host in ACTION
+    #throw "action error" 
+    write-host "bool  - $eventExecuting"
+    if(!$eventExecuting){
+    MainAction
+    }
+}
+catch{
+    ToLog "Error occured.Stopping script"
+    stop
+
+    ToLog $($Error) -color Red   
+    ToLog "Script stopped. Sending message to Slack"
+       
+    $result =  sendToSlack -URI $slackUri  -payload "$Error"
+  
+    ToLog "Slack get Message" 
+    write-host $_.Exception
+  
+}
+finally{ 
+    
+    Write-Host "IN FINALLY"
+    #Write-Host $Error
+
+}
+}
+#---------------------------------------------------------------------------------------------------------
+function ProcessStopHandler(){
+$timer.Stop()
+#write-host action-2
+$message = "IIS stopped. Trying to restart. " 
+ToLog $message
+$SlackPayload = $message
+
+    if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed"){
+      
+      $message = "IIS was uninstalled. Trying to reload project"
+      ToLog $message
+      $slackPayload+= $message
+     
+      $commits = 0
+      MainAction
+    
+    }
+
+    else{
+
+    startIIS
+    Start-Sleep -Seconds 5
+        if((Get-Service w3svc).Status -eq "Running"){
+            
+            $message = "IIS working. Testing $global:BaseName"
+            ToLog $message
+            $SlackPayload+=$message
+            $result =  sendToSlack -URI $slackUri  -payload $slackPayload 
+            TestSite $global:BaseName
+        }
+        else{
+         $message ="IIS couldn't be restarted on $env:computername"
+         ToLog $message
+         $SlackPayload += $message
+                
+         $result =  sendToSlack -URI $slackUri  -payload $slackPayload 
+        }
+    }
+    $timer.Start()       
+
+}
+#---------------------------------------------------------------------------------------------------------
+function FeatureUninstallHandler(){
+
 }
 #---------------------------------------------------------------------------------------------------------
 function MainAction(){
@@ -314,8 +391,8 @@ catch{
 #add test of asp-net installed
 if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed"){
     ToLog "Installing IIS and ASP.NET.."
-    Install-WindowsFeature -Name Web-Server -includeManagementTools
-    dism /online /enable-feature /all /featurename:IIS-ASPNET45
+   ToLog $(Install-WindowsFeature -Name Web-Server -includeManagementTools)
+   ToLog $(dism /online /enable-feature /all /featurename:IIS-ASPNET45)
 }
 
 ToLog "Creating web-site and pool" #move to function
@@ -324,7 +401,7 @@ createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $ii
 -iisAppName $BaseName -directoryPath $Path$BaseName 
 cd $oldPath
 
-write-host Before timer
+
 start-sleep -Seconds 5
 
 if ((Test-Path $HostFilePath) -eq $TRUE -and !$(Get-Content -Path $HostFilePath| Select-String -pattern "127.0.0.1 $BaseName" -Quiet)){
@@ -342,7 +419,7 @@ ToLog "Testing $BaseName"
 write-host "After main IF"
 $originalUrl = Get-RedirectedUrl($shortUrl)
 
-Write-Host "in main $eventExecuting"
+#Write-Host "in main $eventExecuting"
 $global:eventExecuting = $FALSE
     }
 
@@ -357,87 +434,17 @@ catch{
 ToLog $_
 }
 
-$action = {  
-try{
-    write-host in ACTION
-    #throw "action error" 
-    write-host "bool  - $eventExecuting"
-    if(!$eventExecuting){
-    MainAction
-    }
-}
-catch{
-    ToLog "Error occured.Stopping script"
-    stop
-
-    ToLog $($Error) -color Red   
-    ToLog "Script stopped. Sending message to Slack"
-       
-    $result =  sendToSlack -URI $slackUri  -payload "$Error"
-  
-    ToLog "Slack get Message" 
-    write-host $_.Exception
-  
-}
-finally{ 
-    
-    Write-Host "IN FINALLY"
-    #Write-Host $Error
-
-}
-} 
 
 $timer = New-Object System.Timers.Timer
 
 #$event = Register-ObjectEvent -InputObject $timer -EventName elapsed -Action $action
-$EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  thetimer -Action $action -OutVariable out
+$EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  thetimer -Action {timerhandler} -OutVariable out
 
 
 $timer.Interval = 30000
 $timer.AutoReset = $true
 $timer.start()
 
-$action2 = {
-$timer.Stop()
-#write-host action-2
-$message = "IIS stopped. Trying to restart. " 
-ToLog $message
-$SlackPayload = $message
-
-    if((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed"){
-      
-      $message = "IIS was uninstalled. Trying to reload project"
-      ToLog $message
-      $slackPayload+= $message
-     
-      $commits = 0
-      MainAction
-    
-    }
-
-    else{
-
-    startIIS
-    Start-Sleep -Seconds 5
-        if((Get-Service w3svc).Status -eq "Running"){
-            
-            $message = "IIS working. Testing $global:BaseName"
-            ToLog $message
-            $SlackPayload+=$message
-            $result =  sendToSlack -URI $slackUri  -payload $slackPayload 
-            TestSite $global:BaseName
-        }
-        else{
-         $message ="IIS couldn't be restarted on $env:computername"
-         ToLog $message
-         $SlackPayload += $message
-                
-         $result =  sendToSlack -URI $slackUri  -payload $slackPayload 
-        }
-    }
-    $timer.Start()
-       
-}
 $query1 = @" 
  Select * From __InstanceOperationEvent Within 1 
     Where TargetInstance Isa 'Win32_Service' 
@@ -447,6 +454,6 @@ $query1 = @"
    TargetInstance.State="Stopped"
 "@
 
-$eventJob2 = Register-WmiEvent -Query $query1 -Action $action2
+$eventJob2 = Register-WmiEvent -Query $query1 -Action {ProcessStopHandler}
 
 # Get-EventSubscriber| Unregister-Event
