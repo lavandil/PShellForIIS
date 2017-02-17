@@ -2,6 +2,7 @@
 cls
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+Import-Module WebAdministration
 New-Module -name MainDeclaration {
     $Path = "C:\"
  
@@ -19,7 +20,7 @@ New-Module -name MainDeclaration {
     $iisAppPoolDotNetVersion = "v4.0"
     $HostFilePath = "$env:windir\System32\drivers\etc\hosts"
     $ErrorMessage =""
-    $commits = 7
+    $commits = 0
 
  
     $logFile = "C:\log.txt"
@@ -72,17 +73,18 @@ function Test-Connection(){
             if(!$Method){
             $Method = "Head" 
             }
-           debug $Method
-           debug "Adress $adress"
+           #debug $Method
+           #debug "Adress $adress"
           
-           $httpResponse = Invoke-WebRequest $adress -Method $Method -DisableKeepAlive
+           $httpResponse = Invoke-WebRequest $adress -Method $Method 
             
-           debug $httpresponse.GetType() 
+           #debug $httpresponse.GetType() 
            $httpResponse.BaseResponse.Close()
             if( ($httpResponse |select -ExpandProperty StatusCode) -eq 200){           
                 return $TRUE
              }
-             $httpResponse.BaseResponse.Dispose()
+             $httpResponse.BaseResponse.Dispose($TRUE)
+             #start-sleep -Seconds 5
         }
         catch {
             $global:ErrorMessage = $_   
@@ -99,8 +101,7 @@ param(
 [string] $iisAppName,
 [string] $directoryPath
 )
-
-Import-Module WebAdministration
+$oldPath = Get-Location
 #navigate to the app pools root
 cd IIS:\AppPools\
 
@@ -119,12 +120,15 @@ cd IIS:\Sites\
 #check if the site exists
 if (Test-Path $iisAppName -pathType container)
 {
+    cd $oldPath
     return
+    
 }
 
 #create the site
 $iisApp = New-Item $iisAppName -bindings @{protocol="http";bindingInformation=":80:" + $iisAppName} -physicalPath $directoryPath
 $iisApp | Set-ItemProperty -Name "applicationPool" -Value $iisAppPoolName
+cd $oldPath
 }
 #---------------------------------------------------------------------------------------------------------
 function SendToSlack(){
@@ -216,11 +220,9 @@ $config | %{
 }
 #---------------------------------------------------------------------------------------------------------
 function StopAll(){
-
 debug InStopALL
 $timer.Stop()
-"timerEvent", "processEvent", "featureEvent" |%{Unregister-Event $_}
-#Remove-Module MainDeclaration
+"timerEvent", "processEvent", "featureEvent" |%{Unregister-Event $_ -ErrorAction SilentlyContinue}
 }
 #---------------------------------------------------------------------------------------------------------
 function StopIIS(){
@@ -279,7 +281,8 @@ param([string]$name)
 If((Test-Connection -adress $name -Method "GET") -eq $TRUE){
 
     ToLog "Site $name on $env:computername is working!"
-    $result =  sendToSlack -URI $slackUri  -payload "Site $BaseName on $env:computername  is working!"  
+    $result =  sendToSlack -URI $slackUri  -payload "Site $BaseName on $env:computername is working!" 
+  
 }
 else {
 
@@ -290,11 +293,12 @@ else {
     }
 
     ToLog $("-"*20) -noDatePrefix $TRUE
+ 
 }
 #---------------------------------------------------------------------------------------------------------
 function TimerHandler(){
 try{
-    debug in ACTION
+    debug "in ACTION"
     #throw "action error" 
     
     if(!$eventExecuting){
@@ -362,20 +366,67 @@ $SlackPayload = $message
 }
 #---------------------------------------------------------------------------------------------------------
 function FeatureRemoveHandler(){
+param($Event)
 $timer.Stop()
 debug FeatureHandler
-debug $Event
-debug $Event.SourceEventArgs
-debug $Event.SourceEventArgs.NewEvent
-debug $Event.SourceEventArgs.NewEvent.NumberOfEvents
-debug "$($Event.SourceEventArgs.NewEvent.NumberOfEvents) features were removed"
-#Install-IISASP4
+ToLog "Features removed:$($Event.SourceEventArgs.NewEvent.NumberOfEvents)" -color red
+
+If((Test-Connection -adress $script:BaseName -Method "GET") -eq $TRUE){
+
+  ToLog "Site $name on $env:computername is working!"
+  ToLog "Sending message to Slack $slackUri"
+  $result = sendToSlack -URI $slackUri -payload "Site $BaseName on $env:computername is working!"
+  debug "after message"
+  $timer.Start()    
+}
+else{
+    ToLog "Site $name responded with errors" -color Red 
+    ToLog $ErrorMessage -color Red  #remove from testconnection tolog
+    ToLog "Trying to reinstall IIS"
+     $result =  sendToSlack -URI $slackUri  -payload "Site $script:BaseName on $env:computername is working after removing features!" 
+    Install-IISASP4
+
+    If((Test-Connection -adress $script:BaseName -Method "GET") -eq $TRUE){
+
+      ToLog "Site $name on $env:computername is working!"
+      $result =  sendToSlack -URI $slackUri  -payload "Site $script:BaseName on $env:computername is working after removing features!" 
+      $timer.Start()
+    }
+    else {
+         ToLog $ErrorMessage -color Red
+         ToLog "Sending message to Slack $slackUri"
+         $result = sendToSlack -URI $slackUri  -payload $ErrorMessage 
+         ToLog "Stopping script"
+         StopAll     
+    }
+}
 }
 #---------------------------------------------------------------------------------------------------------
 function Install-IISASP4(){
    ToLog "Installing IIS and ASP.NET.."
-   ToLog $(Install-WindowsFeature -Name Web-Server -includeManagementTools)
-   dism /online /enable-feature /all /featurename:IIS-ASPNET45
+   $iisInstalResult = Install-WindowsFeature -Name Web-Server -includeManagementTools -WarningAction SilentlyContinue   
+   $aspInstallResult = dism /online /enable-feature /all /featurename:IIS-ASPNET45
+   if($iisInstallResult.Restart -eq "YES"){
+
+        ToLog "Restart required after IIS installation. InstallationSucces = $($iisInstalResult.Success)"
+        }
+   if($iisInstallResult.Success -eq "True"){
+
+        return $TRUE
+   }
+   else {
+
+        ToLog "Something gone wrong."
+        ToLog "$($iisInstallResult)"
+        return $FALSE
+   }
+}
+#---------------------------------------------------------------------------------------------------------
+function AllowDownloading(){
+$oldPath = Get-Location
+cd "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\zones\3"
+$result = new-itemproperty . -Name 1803 -Value 0 -Type DWORD -Force
+cd $oldPath
 }
 #---------------------------------------------------------------------------------------------------------
 function MainAction(){
@@ -383,8 +434,9 @@ debug Main
 $gitUrlTest = Test-Connection($gitUrl)
 $needUpdate = IsGitUpdated($gitRssUrl)
 
-debug $gitUrlTest
-If($gitUrlTest -and $needUpdate){
+#debug $gitUrlTest
+debug "Need update? $needUpdate"
+If($gitUrlTest -and !$needUpdate){
 
 ToLog -message  $(get-date)  -noDatePrefix $TRUE 
 
@@ -421,20 +473,19 @@ catch{
     Unzip $Path$FileName $Path
     ToLog("Unzipping in $Path$BaseName")
     FixConfig  
-    StartPool -poolName $iisAppPoolName
-  
+    StartPool -poolName $iisAppPoolName  
 }
 
 #add test of asp-net installed
 if(((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed") -or ((Get-WindowsFeature Web-Asp-Net45|select -ExpandProperty InstallState) -ne "Installed")){
-  Install-IISASP4
+  $iisInstallResult = Install-IISASP4
 }
 
-ToLog "Creating web-site and pool" #move to function
-$oldPath = Get-Location
+ToLog "Creating web-site and pool"
+
 createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $iisAppPoolDotNetVersion `
 -iisAppName $BaseName -directoryPath $Path$BaseName 
-cd $oldPath
+
 
 
 start-sleep -Seconds 5
@@ -452,6 +503,7 @@ ToLog "Testing $script:BaseName"
 
 TestSite $script:BaseName
 }
+
 
 
 debug "After main IF"
@@ -473,7 +525,7 @@ $timer.AutoReset = $true
 $timer.start()
 
 $eventJob2 = Register-WmiEvent -Query $eventQuery -Action {ProcessStopHandler} -SourceIdentifier processEvent
-$eventJob3 = Register-WmiEvent -Query $featureQuery -Action {FeatureRemoveHandler} -SourceIdentifier featureEvent
+$eventJob3 = Register-WmiEvent -Query $featureQuery -Action {FeatureRemoveHandler($Event)} -SourceIdentifier featureEvent
 
 MainAction
 }
