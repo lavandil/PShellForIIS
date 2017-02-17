@@ -13,8 +13,8 @@ New-Module -name MainDeclaration {
    
 
     $shortUrl = "https://goo.gl/fu879a"
-    $slackUri = "https://hooks.slack.com/services/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"
-
+    
+   
 
     $iisAppPoolName = "TestPool"
     $iisAppPoolDotNetVersion = "v4.0"
@@ -27,6 +27,7 @@ New-Module -name MainDeclaration {
     $EventExecuting = $TRUE
     $debug = $TRUE
     $timerInterval = 60000
+    $firstRun = $TRUE
 
     $eventQuery = @" 
      Select * From __InstanceOperationEvent Within 1 
@@ -54,9 +55,9 @@ function Get-NameFromUrl {
     )
         $request = [System.Net.WebRequest]::Create($URL)    
         $response=$request.GetResponse()
-
-
-        return $response.GetResponseHeader("Content-Disposition")
+        $result = $response.GetResponseHeader("Content-Disposition")
+        $response.Dispose()
+        return $result
     }
 #---------------------------------------------------------------------------------------------------------
 function Unzip {
@@ -87,7 +88,7 @@ function Test-Connection(){
              #start-sleep -Seconds 5
         }
         catch {
-            $global:ErrorMessage = $_   
+            $ErrorMessage = $_   
             debug  "in Test-Connection $_ with url $adress"            
             return $FALSE
     }
@@ -134,9 +135,10 @@ cd $oldPath
 function SendToSlack(){
 param([string] $URI,[object]$payload )
 
-
-$objectToPayload = @{		
-	"text" = $payload;	
+$objectToPayload = @{
+    "username" = "$BaseName";
+    "icon_emoji" = ":necktie:";
+	"text" = $payload;
 }
     $result = Invoke-WebRequest -URI $URI -Method Post -ContentType "application/json" -Body (ConvertTo-Json -Compress -InputObject $objectToPayload)
 
@@ -146,7 +148,7 @@ $objectToPayload = @{
         return $TRUE
     }
     return $FALSE
-    }
+}
 #---------------------------------------------------------------------------------------------------------
 function Get-RedirectedUrl {
 
@@ -162,8 +164,11 @@ function Get-RedirectedUrl {
       If ($response.StatusCode -eq "MovedPermanently")
         {
             $response.GetResponseHeader("Location")
+            $response.Dispose()
         }
     }
+$slackUri = Get-RedirectedUrl($shortUrl) 
+#$slackUri = "https://hooks.slack.com/services/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"
 #---------------------------------------------------------------------------------------------------------
 function IsGitUpdated(){
     param([string]$url)
@@ -171,8 +176,8 @@ function IsGitUpdated(){
         $response = Invoke-WebRequest -Uri $url
         $doc = [xml]$response.Content
  
-        if($doc.feed.entry.count -gt $global:commits){
-        $global:commits = $doc.feed.entry.count
+        if($doc.feed.entry.count -gt $commits){
+        $commits = $doc.feed.entry.count
         return $FALSE
         }
         else {
@@ -298,7 +303,7 @@ else {
 #---------------------------------------------------------------------------------------------------------
 function TimerHandler(){
 try{
-    debug "in ACTION"
+    debug "TimerHandler"
     #throw "action error" 
     
     if(!$eventExecuting){
@@ -404,12 +409,13 @@ else{
 #---------------------------------------------------------------------------------------------------------
 function Install-IISASP4(){
    ToLog "Installing IIS and ASP.NET.."
-   $iisInstalResult = Install-WindowsFeature -Name Web-Server -includeManagementTools -WarningAction SilentlyContinue   
-   $aspInstallResult = dism /online /enable-feature /all /featurename:IIS-ASPNET45
+   $iisInstallResult = Install-WindowsFeature -Name Web-Server -includeManagementTools -WarningAction SilentlyContinue   
+   $aspInstallResult = dism /online /enable-feature /all /featurename:IIS-ASPNET45 /norestart
    if($iisInstallResult.Restart -eq "YES"){
 
         ToLog "Restart required after IIS installation. InstallationSucces = $($iisInstalResult.Success)"
         }
+       
    if($iisInstallResult.Success -eq "True"){
 
         return $TRUE
@@ -431,11 +437,12 @@ cd $oldPath
 #---------------------------------------------------------------------------------------------------------
 function MainAction(){
 debug Main
+debug "Debug enabled:$debug"
 $gitUrlTest = Test-Connection($gitUrl)
 $needUpdate = IsGitUpdated($gitRssUrl)
 
 #debug $gitUrlTest
-debug "Need update? $needUpdate"
+debug "Need update? $(!$needUpdate)"
 If($gitUrlTest -and !$needUpdate){
 
 ToLog -message  $(get-date)  -noDatePrefix $TRUE 
@@ -486,10 +493,13 @@ ToLog "Creating web-site and pool"
 createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $iisAppPoolDotNetVersion `
 -iisAppName $BaseName -directoryPath $Path$BaseName 
 
-
-
 start-sleep -Seconds 5
+if((Get-Service w3svc).Status -ne "Running"){
+ToLog "Service w3svc not running. Starting IIS" 
+StartIIS
+}
 if((Get-WebItemState "IIS:\sites\$BaseName").Value -ne "Started"){
+ToLog "Website $BaseName not started. Starting"
     Start-WebSite $BaseName
 }
 
@@ -504,13 +514,9 @@ ToLog "Testing $script:BaseName"
 TestSite $script:BaseName
 }
 
-
-
 debug "After main IF"
-$originalUrl = Get-RedirectedUrl($shortUrl)
 
-#Write-Host "in main $eventExecuting"
-$global:eventExecuting = $FALSE
+$script:eventExecuting = $FALSE
 }
 
 Export-ModuleMember -Function * -Variable * 
@@ -527,11 +533,14 @@ $timer.start()
 $eventJob2 = Register-WmiEvent -Query $eventQuery -Action {ProcessStopHandler} -SourceIdentifier processEvent
 $eventJob3 = Register-WmiEvent -Query $featureQuery -Action {FeatureRemoveHandler($Event)} -SourceIdentifier featureEvent
 
+Install-IISASP4 >$null
 MainAction
+
 }
 catch{
 ToLog $_ -color Red
-stopALL
+stopall
 }
+
 
 
