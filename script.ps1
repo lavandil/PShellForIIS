@@ -11,6 +11,7 @@ New-Module -name MainDeclaration {
     $gitRssUrl = "$projectPath/commits/master.atom"
 
     $shortUrl = "https://goo.gl/fu879a"
+    #$shortUrl = "https://goo.gl/LWjuda"
 
     $iisAppPoolName = "TestPool"
     $iisAppPoolDotNetVersion = "v4.0"
@@ -241,13 +242,13 @@ $config | %{
 #---------------------------------------------------------------------------------------------------------
 function StopAll(){
 debug InStopALL
-$timer.Stop()
+$script:timer.Stop()
 "timerEvent", "processEvent", "featureEvent" |%{Unregister-Event $_ -ErrorAction SilentlyContinue}
 }
 #---------------------------------------------------------------------------------------------------------
 function StartAll(){
 debug StartAll
-if($script:timer.Enabled -eq "True"){
+if(Get-EventSubscriber timerEvent){
 debug "Timer already exists.Removing.."
 stopall
 }
@@ -340,7 +341,7 @@ else {
 #---------------------------------------------------------------------------------------------------------
 function TimerHandler(){
 try{
-    ToLog "TimerHandler"
+    debug "TimerHandler"
     #throw "action error" 
     
     if(!$eventExecuting){
