@@ -248,10 +248,11 @@ $script:timer.Stop()
 #---------------------------------------------------------------------------------------------------------
 function StartAll(){
 debug StartAll
-if(Get-EventSubscriber timerEvent){
-debug "Timer already exists.Removing.."
+<#
+if($script:timer){
+write-host "Timer already exists.Removing.."
 stopall
-}
+}#>
 $script:timer = New-Object System.Timers.Timer
 $EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  timerEvent -Action {timerhandler}
 $timer.Interval = $timerInterval
