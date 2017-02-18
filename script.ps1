@@ -41,7 +41,6 @@ New-Module -name MainDeclaration {
      GROUP Within 5
 "@
 
-
 #---------------------------------------------------------------------------------------------------------
 function Get-NameFromUrl {
 
@@ -128,7 +127,10 @@ cd $oldPath
 }
 #---------------------------------------------------------------------------------------------------------
 function SendToSlack(){
-param([string] $URI,[object]$payload )
+param(
+[string] $URI,
+[Parameter(ValueFromPipeline)]
+[object]$payload )
 try{
 $objectToPayload = @{
     "username" = "$BaseName";
@@ -148,6 +150,7 @@ catch{
     return $FALSE
 }
 }
+#$x = 123 |tolog -PassThru | sendtoslack -URI "$slackUri"
 #---------------------------------------------------------------------------------------------------------
 function Get-RedirectedUrl {
 
@@ -194,7 +197,13 @@ function DownloadProject(){
     }
 #---------------------------------------------------------------------------------------------------------
 function ToLog(){
-param([string]$message,[bool]$noDatePrefix = $false, [string]$color= "Green")
+param(
+[Parameter(ValueFromPipeline)]
+[string]$message,
+[bool]$noDatePrefix = $false,
+[string]$color= "Green",
+[switch]$PassThru
+)
     if($noDatePrefix){
   
         $message |
@@ -204,6 +213,9 @@ param([string]$message,[bool]$noDatePrefix = $false, [string]$color= "Green")
          "$(get-date -Format ‘HH:mm:ss’):" |
             %{Write-Host $_ -ForegroundColor $color -NoNewline; Write-Host $message;$_ = $_+ $($message);
              out-file -filepath $logFile -inputobject $_ -append}     
+    }
+    if($PassThru){
+        return $message
     }
 }
 #---------------------------------------------------------------------------------------------------------
