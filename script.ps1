@@ -21,10 +21,11 @@ New-Module -name MainDeclaration {
  
     $logFile = "C:\log.txt"
     $EventExecuting = $TRUE
-    $debug = $TRUE
-    $timerInterval = 60000
+    $debug = $FALSE
+    $consoleOutput = $TRUE
+    $timerInterval = 30000
     $firstRun = $TRUE
-
+    
     $eventQuery = @" 
      Select * From __InstanceOperationEvent Within 1 
      Where TargetInstance Isa 'Win32_Service' 
@@ -133,6 +134,7 @@ param(
 [Parameter(ValueFromPipeline)]
 [object]$payload )
 try{
+debug $payload
 $objectToPayload = @{
     "username" = "$BaseName";
     "icon_emoji" = ":necktie:";
@@ -148,7 +150,7 @@ $objectToPayload = @{
 }
 catch{
     ToLog "Slack didn't get message" -color Red
-    debug $_
+    ToLog $_
     return $FALSE
 }
 }
@@ -172,7 +174,6 @@ function Get-RedirectedUrl {
         }
     }
 $slackUri = Get-RedirectedUrl($shortUrl) 
-#$slackUri = "https://hooks.slack.com/services/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"
 #---------------------------------------------------------------------------------------------------------
 function IsGitUpdated(){
     param([string]$url)
@@ -206,14 +207,15 @@ param(
 [string]$color= "Green",
 [switch]$PassThru
 )
+ 
     if($noDatePrefix){
-  
+
         $message |
-         %{write-host $_ -ForegroundColor Magenta; out-file -filepath $logFile -inputobject $_ -append}
+         %{if($consoleOutput){write-host $_ -ForegroundColor Magenta}; out-file -filepath $logFile -inputobject $_ -append}
     }
     else {     
          "$(get-date -Format ‘HH:mm:ss’):" |
-            %{Write-Host $_ -ForegroundColor $color -NoNewline; Write-Host $message;$_ = $_+ $($message);
+            %{if($consoleOutput){Write-Host $_ -ForegroundColor $color -NoNewline; Write-Host $message};$_ = $_+ $($message);
              out-file -filepath $logFile -inputobject $_ -append}     
     }
     if($PassThru){
@@ -224,7 +226,7 @@ param(
 function Debug(){
 param([string]$message)
 if($debug){
-write-host $message -ForegroundColor DarkYellow
+write-host "debug:$message" -ForegroundColor Yellow
 }
 }
 #---------------------------------------------------------------------------------------------------------
@@ -272,6 +274,7 @@ function StartIIS(){
 function StopPool(){
 param([string]$poolName)
 try{
+ debug "StopPool"
  $state= (Get-WebAppPoolState -Name $poolName).Value
 
      if($state -ne "Stopped"){
@@ -280,7 +283,7 @@ try{
 
 
  while((Get-WebAppPoolState -Name $poolName).Value -ne "Stopped"){
-    Start-Sleep -s 5
+    Start-Sleep -s 2
     ToLog "Stopping $poolName, state: $((Get-WebAppPoolState -Name $poolName).Value)"    
  }
  }
@@ -300,7 +303,7 @@ try{
      } 
 
  while((Get-WebAppPoolState -Name $poolName).Value -ne "Started"){
-    Start-Sleep -s 2
+    Start-Sleep -Seconds 2
     ToLog "Starting $poolName, state: $((Get-WebAppPoolState -Name $poolName).Value)"
  }
  }
@@ -313,6 +316,7 @@ function TestSite(){
 param([string]$name)
 
 debug "TestSite"
+#start-sleep -Seconds 10
 If((Test-Connection -adress $name -Method "GET") -eq $TRUE){
 
     ToLog "Site $name on $env:computername is working!"
@@ -326,6 +330,7 @@ else {
     ToLog $ErrorMessage -color Red  #remove from testconnection tolog
     ToLog "Sending message to Slack $slackUri"
     $result = sendToSlack -URI $slackUri  -payload $ErrorMessage   
+    debug "123"
     $script:ErrorMessage =""  
     }
 
@@ -335,7 +340,7 @@ else {
 #---------------------------------------------------------------------------------------------------------
 function TimerHandler(){
 try{
-    debug "TimerHandler"
+    ToLog "TimerHandler"
     #throw "action error" 
     
     if(!$eventExecuting){
@@ -381,7 +386,7 @@ $SlackPayload = $message
     else{
 
     startIIS
-    Start-Sleep -Seconds 5
+    #Start-Sleep -Seconds 5
         if((Get-Service w3svc).Status -eq "Running"){
             
             $message = "IIS working. Testing $BaseName"
@@ -446,7 +451,8 @@ ToLog $("-"*20) ToLog $("-"*20) -noDatePrefix $TRUE
 #---------------------------------------------------------------------------------------------------------
 function Install-IISASP4(){
    ToLog "Installing IIS and ASP.NET.."
-   $iisInstallResult = Install-WindowsFeature -Name Web-Server -includeManagementTools -WarningAction SilentlyContinue   
+   $iisInstallResult = Install-WindowsFeature -Name Web-Server  -includeManagementTools -WarningAction SilentlyContinue
+   debug "before asp.net installation"
    $aspInstallResult = dism /online /enable-feature /all /featurename:IIS-ASPNET45 /norestart
 
    if($iisInstallResult.Restart -eq "YES"){
@@ -455,7 +461,7 @@ function Install-IISASP4(){
         }
        
    if($iisInstallResult.Success -eq "True"){
-
+        ToLog "Installation was successfull"
         return $TRUE
    }
    else {
@@ -496,7 +502,7 @@ return [String]::IsNullOrWhiteSpace($string)
 }
 #---------------------------------------------------------------------------------------------------------
 function MainAction(){
-Debug "Debug messages enabled:$debug"
+debug "Debug messages enabled:$debug"
 debug Main
 $gitUrlTest = Test-Connection($gitUrl)
 debug "ErrorMessage - $ErrorMessage"
@@ -557,6 +563,7 @@ debug "Before replacing project"
 
 #add test of asp-net installed
 if(((Get-WindowsFeature -Name web-server| select -ExpandProperty InstallState) -ne "Installed") -or ((Get-WindowsFeature Web-Asp-Net45|select -ExpandProperty InstallState) -ne "Installed")){
+  debug "Install IIS"
   $iisInstallResult = Install-IISASP4
 }
 
@@ -566,11 +573,13 @@ createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $ii
 -iisAppName $BaseName -directoryPath $Path$BaseName 
 addToTrusted($BaseName)
 
-start-sleep -Seconds 5
+debug $((Get-Service w3svc).Status)
 if((Get-Service w3svc).Status -ne "Running"){
 ToLog "Service w3svc not running. Starting IIS" 
 StartIIS
 }
+
+debug $((Get-WebItemState "IIS:\sites\$BaseName").Value)
 if((Get-WebItemState "IIS:\sites\$BaseName").Value -ne "Started"){
 ToLog "Website $BaseName not started. Starting"
     Start-WebSite $BaseName
@@ -583,7 +592,7 @@ Write-output  "127.0.0.1 $script:BaseName"| Out-File $HostFilePath  -encoding AS
 }
 
 ToLog "Testing $script:BaseName"
-
+#start-sleep -Seconds 2
 TestSite $script:BaseName
 }
 
@@ -597,7 +606,7 @@ Export-ModuleMember -Function * -Variable *
 #---------------------------------------------------------------------------------------------------------
 
 try{
-Install-IISASP4
+Install-IISASP4 >$null
 Import-Module WebAdministration
 MainAction
 StartAll
