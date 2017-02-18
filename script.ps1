@@ -83,7 +83,8 @@ function Test-Connection(){
         }
         catch {
             $script:ErrorMessage = $_   
-            debug  "in Test-Connection $_ with url $adress"            
+            debug  "in Test-Connection $_ with url $adress"  
+            debug $_          
             return $FALSE
     }
     }
@@ -147,6 +148,7 @@ $objectToPayload = @{
 }
 catch{
     ToLog "Slack didn't get message" -color Red
+    debug $_
     return $FALSE
 }
 }
@@ -323,7 +325,8 @@ else {
     
     ToLog $ErrorMessage -color Red  #remove from testconnection tolog
     ToLog "Sending message to Slack $slackUri"
-    $result = sendToSlack -URI $slackUri  -payload $ErrorMessage     
+    $result = sendToSlack -URI $slackUri  -payload $ErrorMessage   
+    $script:ErrorMessage =""  
     }
 
     ToLog $("-"*20) -noDatePrefix $TRUE
@@ -594,7 +597,7 @@ Export-ModuleMember -Function * -Variable *
 #---------------------------------------------------------------------------------------------------------
 
 try{
-Install-IISASP4 >$null
+Install-IISASP4
 Import-Module WebAdministration
 MainAction
 StartAll
