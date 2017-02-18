@@ -2,7 +2,7 @@
 cls
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-Import-Module WebAdministration
+
 New-Module -name MainDeclaration {
     $Path = "C:\"
  
@@ -55,7 +55,7 @@ function Get-NameFromUrl {
     )
         $request = [System.Net.WebRequest]::Create($URL)    
         $response=$request.GetResponse()
-        $result = $response.GetResponseHeader("Content-Disposition")
+        $result = $response.GetResponseHeader("Content-Disposition")|% {($_ -split "=")[1]} 
         $response.Dispose()
         return $result
     }
@@ -189,7 +189,7 @@ function DownloadProject(){
     param([string]$Url, [string] $FileName)
   
         #Write-Host "Downloading from github.."
-        #Invoke-WebRequest $gitUrl -OutFile $FileName
+        $response = Invoke-WebRequest $gitUrl -OutFile $FileName
         #write-Host "Download complete.."
         return $TRUE
     }
@@ -228,6 +228,17 @@ function StopAll(){
 debug InStopALL
 $timer.Stop()
 "timerEvent", "processEvent", "featureEvent" |%{Unregister-Event $_ -ErrorAction SilentlyContinue}
+}
+
+function StartAll(){
+$timer = New-Object System.Timers.Timer
+$EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  timerEvent -Action {timerhandler} -OutVariable out
+$timer.Interval = $timerInterval
+$timer.AutoReset = $true
+$timer.start()
+
+$eventJob2 = Register-WmiEvent -Query $eventQuery -Action {ProcessStopHandler} -SourceIdentifier processEvent
+$eventJob3 = Register-WmiEvent -Query $featureQuery -Action {FeatureRemoveHandler($Event)} -SourceIdentifier featureEvent
 }
 #---------------------------------------------------------------------------------------------------------
 function StopIIS(){
@@ -283,6 +294,7 @@ try{
 function TestSite(){
 param([string]$name)
 
+debug "TestSite"
 If((Test-Connection -adress $name -Method "GET") -eq $TRUE){
 
     ToLog "Site $name on $env:computername is working!"
@@ -292,6 +304,7 @@ If((Test-Connection -adress $name -Method "GET") -eq $TRUE){
 else {
 
     ToLog "Site $name responded with errors" -color Red 
+    
     ToLog $ErrorMessage -color Red  #remove from testconnection tolog
     ToLog "Sending message to Slack $slackUri"
     $result = sendToSlack -URI $slackUri  -payload $ErrorMessage     
@@ -372,6 +385,7 @@ $SlackPayload = $message
 #---------------------------------------------------------------------------------------------------------
 function FeatureRemoveHandler(){
 param($Event)
+try{
 $timer.Stop()
 debug FeatureHandler
 ToLog "Features removed:$($Event.SourceEventArgs.NewEvent.NumberOfEvents)" -color red
@@ -406,6 +420,10 @@ else{
     }
 }
 }
+finally{
+ToLog $("-"*20) ToLog $("-"*20) -noDatePrefix $TRUE
+}
+}
 #---------------------------------------------------------------------------------------------------------
 function Install-IISASP4(){
    ToLog "Installing IIS and ASP.NET.."
@@ -435,13 +453,19 @@ $result = new-itemproperty . -Name 1803 -Value 0 -Type DWORD -Force
 cd $oldPath
 }
 #---------------------------------------------------------------------------------------------------------
+function IsNull(){
+param([string]$string)
+
+return [String]::IsNullOrWhiteSpace($string)
+}
+#---------------------------------------------------------------------------------------------------------
 function MainAction(){
 debug Main
-debug "Debug enabled:$debug"
+ToLog "Debug enabled:$debug"
 $gitUrlTest = Test-Connection($gitUrl)
 $needUpdate = IsGitUpdated($gitRssUrl)
 
-#debug $gitUrlTest
+debug "git url accessible: $gitUrlTest"
 debug "Need update? $(!$needUpdate)"
 If($gitUrlTest -and !$needUpdate){
 
@@ -449,13 +473,21 @@ ToLog -message  $(get-date)  -noDatePrefix $TRUE
 
 ToLog "Zip path is $gitUrl"  
 ToLog "Rss path is $gitRssUrl"
-ToLog "Testing coonection to zip. Accessible? $gitUrlTest"
-ToLog "Require to upload project? $needUpdate"
+ToLog "Testing connection to zip. Accessible? $gitUrlTest"
+ToLog "Require to upload project? $(!$needUpdate)"
 
 try{ 
 
-    $FileName = Get-NameFromUrl($gitUrl) |% {($_ -split "=")[1]}    
-    $script:BaseName = (Get-Item  $FileName).BaseName
+    $FileName = Get-NameFromUrl($gitUrl)    
+    #$script:BaseName = (Get-Item  $FileName).BaseName
+    $script:BaseName = $FileName -replace ".zip" , ""
+    debug "Basename - $BaseName"
+
+    if(isNull ($BaseName)) {
+        $BaseName = "TestSite"
+        ToLog "BaseName is empty. Current Name - TestSite"
+        
+    }
     ToLog "$FileName unzip in folder $BaseName"  
     $isDownloaded = DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
     
@@ -467,7 +499,7 @@ catch{
     ToLog $ErrorMessage
      #>>>?????
     }
-  
+debug "Before replacing project"
    if($isDownloaded){
     ToLog "$FileName downloaded"
        if( Test-Path $Path$BaseName){
@@ -524,23 +556,15 @@ Export-ModuleMember -Function * -Variable *
 #---------------------------------------------------------------------------------------------------------
 
 try{
-$timer = New-Object System.Timers.Timer
-$EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  timerEvent -Action {timerhandler} -OutVariable out
-$timer.Interval = $timerInterval
-$timer.AutoReset = $true
-$timer.start()
-
-$eventJob2 = Register-WmiEvent -Query $eventQuery -Action {ProcessStopHandler} -SourceIdentifier processEvent
-$eventJob3 = Register-WmiEvent -Query $featureQuery -Action {FeatureRemoveHandler($Event)} -SourceIdentifier featureEvent
-
 Install-IISASP4 >$null
+Import-Module WebAdministration
 MainAction
+StartAll
 
 }
 catch{
 ToLog $_ -color Red
 stopall
 }
-
 
 
