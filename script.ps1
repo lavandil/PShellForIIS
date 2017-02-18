@@ -5,22 +5,18 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 New-Module -name MainDeclaration {
     $Path = "C:\"
- 
 
     $projectPath= "https://github.com/TargetProcess/DevOpsTaskJunior"
     $gitUrl = "$($projectPath -replace '^https:\/\/' , 'https://codeload.')/zip/master"
     $gitRssUrl = "$projectPath/commits/master.atom"
-   
 
     $shortUrl = "https://goo.gl/fu879a"
-    
-   
 
     $iisAppPoolName = "TestPool"
     $iisAppPoolDotNetVersion = "v4.0"
     $HostFilePath = "$env:windir\System32\drivers\etc\hosts"
-    $ErrorMessage =""
-    $commits = 0
+    $script:ErrorMessage =""
+    $script:commits = 0
 
  
     $logFile = "C:\log.txt"
@@ -70,25 +66,24 @@ function Unzip {
 function Test-Connection(){
 
         param([string]$adress , [string] $Method )
-        try {     
+        try {              
             if(!$Method){
             $Method = "Head" 
             }
            #debug $Method
            #debug "Adress $adress"
           
-           $httpResponse = Invoke-WebRequest $adress -Method $Method 
-            
-           #debug $httpresponse.GetType() 
+           $httpResponse = Invoke-WebRequest $adress -Method $Method            
+           
            $httpResponse.BaseResponse.Close()
-            if( ($httpResponse |select -ExpandProperty StatusCode) -eq 200){           
+            if( ($httpResponse |select -ExpandProperty StatusCode) -eq 200){
+                       
                 return $TRUE
              }
-             $httpResponse.BaseResponse.Dispose($TRUE)
-             #start-sleep -Seconds 5
+             
         }
         catch {
-            $ErrorMessage = $_   
+            $script:ErrorMessage = $_   
             debug  "in Test-Connection $_ with url $adress"            
             return $FALSE
     }
@@ -134,7 +129,7 @@ cd $oldPath
 #---------------------------------------------------------------------------------------------------------
 function SendToSlack(){
 param([string] $URI,[object]$payload )
-
+try{
 $objectToPayload = @{
     "username" = "$BaseName";
     "icon_emoji" = ":necktie:";
@@ -144,10 +139,14 @@ $objectToPayload = @{
 
     if($result.StatusCode -eq 200){
 
-        ToLog "Slack got Message"
+        ToLog "Slack got message"
         return $TRUE
     }
+}
+catch{
+    ToLog "Slack didn't get message" -color Red
     return $FALSE
+}
 }
 #---------------------------------------------------------------------------------------------------------
 function Get-RedirectedUrl {
@@ -177,7 +176,7 @@ function IsGitUpdated(){
         $doc = [xml]$response.Content
  
         if($doc.feed.entry.count -gt $commits){
-        $commits = $doc.feed.entry.count
+        $script:commits = $doc.feed.entry.count
         return $FALSE
         }
         else {
@@ -229,10 +228,15 @@ debug InStopALL
 $timer.Stop()
 "timerEvent", "processEvent", "featureEvent" |%{Unregister-Event $_ -ErrorAction SilentlyContinue}
 }
-
+#---------------------------------------------------------------------------------------------------------
 function StartAll(){
-$timer = New-Object System.Timers.Timer
-$EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  timerEvent -Action {timerhandler} -OutVariable out
+debug StartAll
+if($script:timer.Enabled -eq "True"){
+debug "Timer already exists.Removing.."
+stopall
+}
+$script:timer = New-Object System.Timers.Timer
+$EventJob = Register-ObjectEvent -InputObject $timer -EventName elapsed –SourceIdentifier  timerEvent -Action {timerhandler}
 $timer.Interval = $timerInterval
 $timer.AutoReset = $true
 $timer.start()
@@ -429,6 +433,7 @@ function Install-IISASP4(){
    ToLog "Installing IIS and ASP.NET.."
    $iisInstallResult = Install-WindowsFeature -Name Web-Server -includeManagementTools -WarningAction SilentlyContinue   
    $aspInstallResult = dism /online /enable-feature /all /featurename:IIS-ASPNET45 /norestart
+
    if($iisInstallResult.Restart -eq "YES"){
 
         ToLog "Restart required after IIS installation. InstallationSucces = $($iisInstalResult.Success)"
@@ -449,8 +454,24 @@ function Install-IISASP4(){
 function AllowDownloading(){
 $oldPath = Get-Location
 cd "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\zones\3"
-$result = new-itemproperty . -Name 1803 -Value 0 -Type DWORD -Force
+if((Get-ItemProperty . -Name 1803) -ne 0){
+  $result = new-itemproperty . -Name 1803 -Value 0 -Type DWORD -Force
+}
 cd $oldPath
+}
+#---------------------------------------------------------------------------------------------------------
+function AddToTrusted(){
+param([string]$domain)
+
+    $oldPath = Get-Location
+    set-location "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+    set-location ZoneMap\EscDomains
+    new-item $domain/ -Force > $null
+    set-location $domain/
+    new-itemproperty . -Name * -Value 2 -Type DWORD -Force > $null
+    new-itemproperty . -Name http -Value 2 -Type DWORD -Force > $null
+    new-itemproperty . -Name https -Value 2 -Type DWORD -Force > $null
+    cd $oldPath
 }
 #---------------------------------------------------------------------------------------------------------
 function IsNull(){
@@ -460,14 +481,17 @@ return [String]::IsNullOrWhiteSpace($string)
 }
 #---------------------------------------------------------------------------------------------------------
 function MainAction(){
+Debug "Debug messages enabled:$debug"
 debug Main
-ToLog "Debug enabled:$debug"
 $gitUrlTest = Test-Connection($gitUrl)
-$needUpdate = IsGitUpdated($gitRssUrl)
+debug "ErrorMessage - $ErrorMessage"
+$needUpdate = !(IsGitUpdated($gitRssUrl))
 
 debug "git url accessible: $gitUrlTest"
-debug "Need update? $(!$needUpdate)"
-If($gitUrlTest -and !$needUpdate){
+debug "Need update? $($needUpdate)"
+debug "Commits: $commits"
+
+If($gitUrlTest -and $needUpdate){
 
 ToLog -message  $(get-date)  -noDatePrefix $TRUE 
 
@@ -488,7 +512,7 @@ try{
         ToLog "BaseName is empty. Current Name - TestSite"
         
     }
-    ToLog "$FileName unzip in folder $BaseName"  
+    
     $isDownloaded = DownloadProject -RssUrl $gitRssUrl -gitUrl $Url -FileName $FileName
     
    }
@@ -499,6 +523,7 @@ catch{
     ToLog $ErrorMessage
      #>>>?????
     }
+ToLog "$FileName will unzip in folder $BaseName"  
 debug "Before replacing project"
    if($isDownloaded){
     ToLog "$FileName downloaded"
@@ -524,6 +549,7 @@ ToLog "Creating web-site and pool"
 
 createWebSiteAndPool -iisAppPoolName $iisAppPoolName -iisAppPoolDoNetVersion $iisAppPoolDotNetVersion `
 -iisAppName $BaseName -directoryPath $Path$BaseName 
+addToTrusted($BaseName)
 
 start-sleep -Seconds 5
 if((Get-Service w3svc).Status -ne "Running"){
